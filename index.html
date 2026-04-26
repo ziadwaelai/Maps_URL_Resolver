@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maps URL Resolver</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0e14;
+    --surface:   rgba(22, 27, 34, 0.6);
+    --surface-2: rgba(28, 33, 40, 0.8);
+    --border:    rgba(255, 255, 255, 0.08);
+    --border-hi: rgba(255, 255, 255, 0.16);
+    --text:      #e6edf3;
+    --text-mute: #7d8590;
+    --accent:    #58a6ff;
+    --accent-2:  #c084fc;
+    --success:   #3fb950;
+    --danger:    #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background:
+      radial-gradient(ellipse 80% 60% at 20% 0%, rgba(88, 166, 255, 0.18) 0%, transparent 50%),
+      radial-gradient(ellipse 60% 60% at 80% 100%, rgba(192, 132, 252, 0.15) 0%, transparent 50%),
+      var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    min-height: 100vh;
+    padding: 56px 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app { max-width: 760px; margin: 0 auto; }
+
+  header { margin-bottom: 32px; text-align: center; }
+  h1 {
+    font-size: 34px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+  }
+  .sub { color: var(--text-mute); font-size: 14px; }
+
+  .card {
+    background: var(--surface);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.25);
+  }
+  .card + .card { margin-top: 16px; }
+
+  .input-card { padding: 22px; }
+  form { display: flex; gap: 10px; }
+  input {
+    flex: 1;
+    padding: 13px 16px;
+    font-family: inherit;
+    font-size: 14px;
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+  input::placeholder { color: var(--text-mute); }
+  input:focus {
+    border-color: var(--accent);
+    background: rgba(0, 0, 0, 0.35);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, .18);
+  }
+
+  button {
+    padding: 13px 24px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+    border: 0;
+    border-radius: 10px;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(88, 166, 255, 0.25);
+    transition: transform .15s, box-shadow .2s, opacity .15s;
+  }
+  button:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(88, 166, 255, 0.35); }
+  button:active { transform: translateY(0); }
+  button:disabled { opacity: .5; cursor: wait; transform: none; box-shadow: none; }
+
+  .status { margin-top: 14px; font-size: 13px; color: var(--text-mute); min-height: 18px; }
+  .status.error { color: var(--danger); }
+  .status .spinner {
+    display: inline-block; width: 12px; height: 12px;
+    border: 2px solid rgba(125, 133, 144, 0.3);
+    border-top-color: var(--accent);
+    border-radius: 50%; vertical-align: -2px; margin-right: 8px;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .result {
+    display: none;
+    animation: fadeIn .35s ease;
+  }
+  .result.show { display: block; }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .coords-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 22px;
+    background: linear-gradient(135deg, rgba(88, 166, 255, 0.08) 0%, rgba(192, 132, 252, 0.08) 100%);
+    border-bottom: 1px solid var(--border);
+  }
+  .coords {
+    font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    user-select: all;
+    word-break: break-all;
+  }
+  .copy-btn {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+    border: 1px solid var(--border-hi);
+    padding: 7px 13px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    cursor: pointer;
+    box-shadow: none;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+  .copy-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--accent);
+    color: var(--accent);
+    transform: none;
+    box-shadow: none;
+  }
+  .copy-btn.copied { color: var(--success); border-color: var(--success); background: rgba(63, 185, 80, 0.1); }
+  .copy-btn svg { display: block; }
+
+  .detail {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 13px 22px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .detail .label { color: var(--text-mute); font-weight: 500; }
+  .detail .value {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    user-select: all;
+  }
+  .detail .value.muted { color: var(--text-mute); font-style: italic; font-family: inherit; }
+
+  #map { height: 420px; background: rgba(0, 0, 0, 0.35); }
+  .leaflet-container { background: rgba(0, 0, 0, 0.35); }
+  .leaflet-control-attribution { background: rgba(13, 17, 23, 0.7) !important; color: var(--text-mute) !important; }
+  .leaflet-control-attribution a { color: var(--accent) !important; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Maps URL Resolver</h1>
+      <div class="sub">Paste a Google Maps URL — get coordinates, phone, and a satellite view.</div>
+    </header>
+
+    <div class="card input-card">
+      <form id="form">
+        <input id="url" type="url" placeholder="https://www.google.com/maps/place/..." required autofocus>
+        <button id="submit" type="submit">Extract</button>
+      </form>
+      <div id="status" class="status"></div>
+    </div>
+
+    <div class="card result" id="result">
+      <div class="coords-bar">
+        <span class="coords" id="coords"></span>
+        <button class="copy-btn" id="copy" type="button">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+          <span id="copy-label">Copy</span>
+        </button>
+      </div>
+      <div class="detail"><span class="label">Latitude</span><span class="value" id="lat"></span></div>
+      <div class="detail"><span class="label">Longitude</span><span class="value" id="lng"></span></div>
+      <div class="detail"><span class="label">Phone</span><span class="value" id="phone"></span></div>
+      <div id="map"></div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const $ = id => document.getElementById(id);
+    const els = {
+      form: $('form'), url: $('url'), submit: $('submit'),
+      status: $('status'), result: $('result'),
+      coords: $('coords'), copyBtn: $('copy'), copyLabel: $('copy-label'),
+      lat: $('lat'), lng: $('lng'), phone: $('phone'),
+    };
+    let map, marker;
+
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch {}
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    function flashCopy() {
+      els.copyBtn.classList.add('copied');
+      els.copyLabel.textContent = 'Copied';
+      setTimeout(() => {
+        els.copyBtn.classList.remove('copied');
+        els.copyLabel.textContent = 'Copy';
+      }, 1500);
+    }
+
+    els.copyBtn.addEventListener('click', async () => {
+      if (await copyText(els.coords.textContent)) flashCopy();
+    });
+
+    function ensureMap() {
+      if (map) return;
+      map = L.map('map', { zoomControl: true, attributionControl: true });
+      L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { attribution: 'Tiles &copy; Esri', maxZoom: 19 }
+      ).addTo(map);
+    }
+
+    function renderMap(lat, lng, label) {
+      ensureMap();
+      map.setView([lat, lng], 18);
+      if (marker) map.removeLayer(marker);
+      marker = L.marker([lat, lng]).addTo(map).bindPopup(label).openPopup();
+      setTimeout(() => map.invalidateSize(), 100);
+    }
+
+    function showResult(d) {
+      const coords = `${d.lat}, ${d.lng}`;
+      els.coords.textContent = coords;
+      els.lat.textContent = d.lat;
+      els.lng.textContent = d.lng;
+      if (d.phone) {
+        els.phone.textContent = d.phone;
+        els.phone.classList.remove('muted');
+      } else {
+        els.phone.textContent = 'not listed';
+        els.phone.classList.add('muted');
+      }
+      els.result.classList.add('show');
+      renderMap(d.lat, d.lng, coords);
+      copyText(coords).then(ok => { if (ok) flashCopy(); });
+    }
+
+    els.form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const url = els.url.value.trim();
+      if (!url) return;
+      els.submit.disabled = true;
+      els.submit.textContent = 'Extracting…';
+      els.status.innerHTML = '<span class="spinner"></span>Rendering page in headless browser (~5s)…';
+      els.status.className = 'status';
+      els.result.classList.remove('show');
+      try {
+        const r = await fetch(`/extract?url=${encodeURIComponent(url)}&phone=true`);
+        const d = await r.json();
+        if (d.lat == null || d.lng == null) {
+          els.status.textContent = 'Could not extract coordinates from this URL.';
+          els.status.className = 'status error';
+          return;
+        }
+        els.status.textContent = '';
+        showResult(d);
+      } catch (err) {
+        els.status.textContent = 'Error: ' + err.message;
+        els.status.className = 'status error';
+      } finally {
+        els.submit.disabled = false;
+        els.submit.textContent = 'Extract';
+      }
+    });
+  </script>
+</body>
+</html>

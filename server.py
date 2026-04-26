@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import re
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 import httpx
 from fastapi import FastAPI, Query
+from fastapi.responses import HTMLResponse
 from playwright.async_api import async_playwright
 from pydantic import BaseModel
 
@@ -132,3 +134,11 @@ async def extract_endpoint(
     phone: bool = Query(False, description="Render the page in a headless browser to also return the phone number (slower)."),
 ):
     return await extract(url, want_phone=phone)
+
+
+INDEX_HTML = (Path(__file__).parent / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    return INDEX_HTML
