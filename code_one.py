@@ -64,11 +64,25 @@ def _resolve_with_browser(url):
             " || /!3d-?\\d+\\.\\d+!4d-?\\d+\\.\\d+/.test(location.href)",
             timeout=15000,
         )
-        return _search(page.url, URL_PATTERNS)
+        lat, lng = _search(page.url, URL_PATTERNS)
+        phone = _extract_phone(page)
+        return lat, lng, phone
     except Exception:
-        return None, None
+        return None, None, None
     finally:
         page.close()
+
+
+def _extract_phone(page):
+    # Google Maps stores the phone in a button attribute: data-item-id="phone:tel:+966..."
+    try:
+        el = page.query_selector('button[data-item-id^="phone:tel:"]')
+        if el:
+            value = el.get_attribute("data-item-id") or ""
+            return value.replace("phone:tel:", "").strip() or None
+    except Exception:
+        pass
+    return None
 
 
 def _search(text, patterns):
@@ -85,12 +99,12 @@ def extract_coords(url):
         if "goo.gl" in url or "maps.app" in url:
             url = requests.get(url, headers=HEADERS, allow_redirects=True, timeout=10).url
 
-        # Fast path: coords are already in the URL.
+        # Fast path: coords are already in the URL (no phone available without rendering).
         lat, lng = _search(url, URL_PATTERNS)
         if lat is not None:
-            return lat, lng
+            return lat, lng, None
 
-        # place_id URLs need a real browser — Google loads coords via JS.
+        # place_id URLs need a real browser — Google loads coords + phone via JS.
         if "place_id:" in url:
             return _resolve_with_browser(url)
 
@@ -98,10 +112,11 @@ def extract_coords(url):
         r = requests.get(url, headers=HEADERS, allow_redirects=True, timeout=15)
         lat, lng = _search(r.url, URL_PATTERNS)
         if lat is not None:
-            return lat, lng
-        return _search(r.text, HTML_PATTERNS)
+            return lat, lng, None
+        lat, lng = _search(r.text, HTML_PATTERNS)
+        return lat, lng, None
     except requests.RequestException:
-        return None, None
+        return None, None, None
  
  
 # Mock input
@@ -130,5 +145,5 @@ test_urls = [
 urls = test_urls    
  
 for url in urls:
-    lat, lng = extract_coords(url)
-    print(f"{lat}, {lng}")
+    lat, lng, phone = extract_coords(url)
+    print(f"{lat}, {lng}, {phone}")
