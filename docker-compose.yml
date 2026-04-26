@@ -4,5 +4,5 @@ services:
     image: maps-url-resolver
     container_name: maps-api
     ports:
-      - "8000:8000"
+      - "8001:8000"
     restart: unless-stopped
