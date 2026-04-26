@@ -71,7 +71,7 @@ async def _extract_phone(page) -> Optional[str]:
     return value.replace("phone:tel:", "").strip() or None
 
 
-async def extract(url: str) -> PlaceInfo:
+async def extract(url: str, want_phone: bool = False) -> PlaceInfo:
     """Resolve a Google Maps URL into lat / lng / phone. Any field may be None."""
     try:
         async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
@@ -79,12 +79,13 @@ async def extract(url: str) -> PlaceInfo:
                 r = await client.get(url)
                 url = str(r.url)
 
+            # Phone is only available via the rendered DOM, so force the browser path.
+            if want_phone or "place_id:" in url:
+                return await _resolve_with_browser(url)
+
             lat, lng = _match(url, URL_PATTERNS)
             if lat is not None:
                 return PlaceInfo(lat=lat, lng=lng)
-
-            if "place_id:" in url:
-                return await _resolve_with_browser(url)
 
             r = await client.get(url)
             lat, lng = _match(str(r.url), URL_PATTERNS)
@@ -126,5 +127,8 @@ app = FastAPI(title="Maps URL Resolver", lifespan=lifespan)
 
 
 @app.get("/extract", response_model=PlaceInfo)
-async def extract_endpoint(url: str = Query(..., description="Google Maps URL")):
-    return await extract(url)
+async def extract_endpoint(
+    url: str = Query(..., description="Google Maps URL"),
+    phone: bool = Query(False, description="Render the page in a headless browser to also return the phone number (slower)."),
+):
+    return await extract(url, want_phone=phone)
