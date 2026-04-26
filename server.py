@@ -45,22 +45,19 @@ def _match(text: str, patterns) -> tuple[Optional[float], Optional[float]]:
 
 
 async def _resolve_with_browser(url: str) -> PlaceInfo:
-    page = await app.state.browser.new_page(user_agent=USER_AGENT)
+    page = await app.state.context.new_page()
     try:
-        print(f"[browser] goto {url}", flush=True)
         await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-        print(f"[browser] after goto: {page.url}", flush=True)
         await page.wait_for_function(
             "() => /@-?\\d+\\.\\d+,-?\\d+\\.\\d+/.test(location.href)"
             " || /!3d-?\\d+\\.\\d+!4d-?\\d+\\.\\d+/.test(location.href)",
             timeout=15000,
         )
-        print(f"[browser] after wait: {page.url}", flush=True)
         lat, lng = _match(page.url, URL_PATTERNS)
         phone = await _extract_phone(page)
         return PlaceInfo(lat=lat, lng=lng, phone=phone)
     except Exception as e:
-        print(f"[browser] FAILED ({type(e).__name__}): {e}", flush=True)
+        print(f"[browser] FAILED ({type(e).__name__}): {e} | url={page.url}", flush=True)
         return PlaceInfo()
     finally:
         await page.close()
@@ -105,9 +102,22 @@ async def lifespan(app: FastAPI):
         headless=True,
         args=["--no-sandbox", "--disable-dev-shm-usage"],
     )
+    # Pre-set Google consent cookies so EU servers skip the consent.google.com wall.
+    app.state.context = await app.state.browser.new_context(
+        user_agent=USER_AGENT,
+        locale="en-US",
+        timezone_id="Asia/Riyadh",
+    )
+    await app.state.context.add_cookies([
+        {"name": "CONSENT", "value": "YES+cb.20210720-07-p0.en+FX+410",
+         "domain": ".google.com", "path": "/"},
+        {"name": "SOCS", "value": "CAISHAgBEhIaAB",
+         "domain": ".google.com", "path": "/"},
+    ])
     try:
         yield
     finally:
+        await app.state.context.close()
         await app.state.browser.close()
         await playwright.stop()
 
