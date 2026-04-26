@@ -47,17 +47,20 @@ def _match(text: str, patterns) -> tuple[Optional[float], Optional[float]]:
 async def _resolve_with_browser(url: str) -> PlaceInfo:
     page = await app.state.browser.new_page(user_agent=USER_AGENT)
     try:
+        print(f"[browser] goto {url}", flush=True)
         await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-        # Wait until Google rewrites the URL with @lat,lng or !3d!4d.
+        print(f"[browser] after goto: {page.url}", flush=True)
         await page.wait_for_function(
             "() => /@-?\\d+\\.\\d+,-?\\d+\\.\\d+/.test(location.href)"
             " || /!3d-?\\d+\\.\\d+!4d-?\\d+\\.\\d+/.test(location.href)",
             timeout=15000,
         )
+        print(f"[browser] after wait: {page.url}", flush=True)
         lat, lng = _match(page.url, URL_PATTERNS)
         phone = await _extract_phone(page)
         return PlaceInfo(lat=lat, lng=lng, phone=phone)
-    except Exception:
+    except Exception as e:
+        print(f"[browser] FAILED ({type(e).__name__}): {e}", flush=True)
         return PlaceInfo()
     finally:
         await page.close()
