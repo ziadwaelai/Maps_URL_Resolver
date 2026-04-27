@@ -21,6 +21,7 @@
     --accent-2:  #c084fc;
     --success:   #3fb950;
     --danger:    #f85149;
+    --warn:      #d29922;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -112,22 +113,40 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .result {
-    display: none;
-    animation: fadeIn .35s ease;
-  }
+  .result { display: none; animation: fadeIn .35s ease; }
   .result.show { display: block; }
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
   }
 
+  .place-header {
+    padding: 20px 22px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .place-name {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 4px;
+  }
+  .place-meta {
+    font-size: 13px;
+    color: var(--text-mute);
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .stars { color: var(--warn); font-weight: 600; }
+  .stars::before { content: "★ "; }
+
   .coords-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 18px 22px;
+    padding: 16px 22px;
     background: linear-gradient(135deg, rgba(88, 166, 255, 0.08) 0%, rgba(192, 132, 252, 0.08) 100%);
     border-bottom: 1px solid var(--border);
   }
@@ -166,20 +185,50 @@
   .copy-btn svg { display: block; }
 
   .detail {
-    display: flex;
-    justify-content: space-between;
+    display: none;   /* hidden by default; .show makes it visible */
     align-items: center;
-    padding: 13px 22px;
+    gap: 14px;
+    padding: 12px 22px;
     border-bottom: 1px solid var(--border);
     font-size: 13px;
   }
-  .detail .label { color: var(--text-mute); font-weight: 500; }
+  .detail.show { display: flex; }
+  .detail .label { color: var(--text-mute); font-weight: 500; min-width: 86px; }
   .detail .value {
-    font-family: 'JetBrains Mono', monospace;
+    flex: 1;
     color: var(--text);
+    word-break: break-word;
     user-select: all;
   }
-  .detail .value.muted { color: var(--text-mute); font-style: italic; font-family: inherit; }
+  .detail .value.mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+  }
+  .detail .value a { color: var(--accent); text-decoration: none; }
+  .detail .value a:hover { text-decoration: underline; }
+
+  .hours-section {
+    display: none;
+    padding: 14px 22px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .hours-section.show { display: block; }
+  .hours-title {
+    font-size: 12px;
+    color: var(--text-mute);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+  }
+  .hours-grid {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 4px 16px;
+    font-size: 13px;
+  }
+  .hours-grid .day { color: var(--text-mute); }
+  .hours-grid .time { color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
 
   #map { height: 420px; background: rgba(0, 0, 0, 0.35); }
   .leaflet-container { background: rgba(0, 0, 0, 0.35); }
@@ -191,7 +240,7 @@
   <div class="app">
     <header>
       <h1>Maps URL Resolver</h1>
-      <div class="sub">Paste a Google Maps URL — get coordinates, phone, and a satellite view.</div>
+      <div class="sub">Paste a Google Maps URL — get coordinates, address, phone, hours, and a satellite view.</div>
     </header>
 
     <div class="card input-card">
@@ -203,6 +252,11 @@
     </div>
 
     <div class="card result" id="result">
+      <div class="place-header" id="place-header" style="display:none">
+        <div class="place-name" id="place-name"></div>
+        <div class="place-meta" id="place-meta"></div>
+      </div>
+
       <div class="coords-bar">
         <span class="coords" id="coords"></span>
         <button class="copy-btn" id="copy" type="button">
@@ -213,9 +267,17 @@
           <span id="copy-label">Copy</span>
         </button>
       </div>
-      <div class="detail"><span class="label">Latitude</span><span class="value" id="lat"></span></div>
-      <div class="detail"><span class="label">Longitude</span><span class="value" id="lng"></span></div>
-      <div class="detail"><span class="label">Phone</span><span class="value" id="phone"></span></div>
+
+      <div class="detail" id="row-address"><span class="label">Address</span><span class="value" id="address"></span></div>
+      <div class="detail" id="row-phone"><span class="label">Phone</span><span class="value mono" id="phone"></span></div>
+      <div class="detail" id="row-website"><span class="label">Website</span><span class="value" id="website"></span></div>
+      <div class="detail" id="row-category"><span class="label">Category</span><span class="value" id="category"></span></div>
+
+      <div class="hours-section" id="hours-section">
+        <div class="hours-title">Opening hours</div>
+        <div class="hours-grid" id="hours-grid"></div>
+      </div>
+
       <div id="map"></div>
     </div>
   </div>
@@ -226,8 +288,13 @@
     const els = {
       form: $('form'), url: $('url'), submit: $('submit'),
       status: $('status'), result: $('result'),
+      placeHeader: $('place-header'), placeName: $('place-name'), placeMeta: $('place-meta'),
       coords: $('coords'), copyBtn: $('copy'), copyLabel: $('copy-label'),
-      lat: $('lat'), lng: $('lng'), phone: $('phone'),
+      address: $('address'), rowAddress: $('row-address'),
+      phone: $('phone'), rowPhone: $('row-phone'),
+      website: $('website'), rowWebsite: $('row-website'),
+      category: $('category'), rowCategory: $('row-category'),
+      hoursSection: $('hours-section'), hoursGrid: $('hours-grid'),
     };
     let map, marker;
 
@@ -264,7 +331,7 @@
 
     function ensureMap() {
       if (map) return;
-      map = L.map('map', { zoomControl: true, attributionControl: true });
+      map = L.map('map', { zoomControl: true });
       L.tileLayer(
         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         { attribution: 'Tiles &copy; Esri', maxZoom: 19 }
@@ -279,21 +346,66 @@
       setTimeout(() => map.invalidateSize(), 100);
     }
 
-    function showResult(d) {
-      const coords = `${d.lat}, ${d.lng}`;
-      els.coords.textContent = coords;
-      els.lat.textContent = d.lat;
-      els.lng.textContent = d.lng;
-      if (d.phone) {
-        els.phone.textContent = d.phone;
-        els.phone.classList.remove('muted');
-      } else {
-        els.phone.textContent = 'not listed';
-        els.phone.classList.add('muted');
+    function setRow(rowEl, valueEl, value, transform) {
+      if (value == null || value === '') {
+        rowEl.classList.remove('show');
+        return;
       }
+      if (transform) transform(valueEl, value);
+      else valueEl.textContent = value;
+      rowEl.classList.add('show');
+    }
+
+    function renderHeader(d) {
+      const meta = [];
+      if (d.category) meta.push(`<span>${d.category}</span>`);
+      if (d.rating != null) {
+        const reviewsTxt = d.reviews ? ` (${d.reviews.toLocaleString()})` : '';
+        meta.push(`<span class="stars">${d.rating.toFixed(1)}${reviewsTxt}</span>`);
+      }
+      if (d.name || meta.length) {
+        els.placeName.textContent = d.name || '';
+        els.placeMeta.innerHTML = meta.join('');
+        els.placeHeader.style.display = 'block';
+      } else {
+        els.placeHeader.style.display = 'none';
+      }
+    }
+
+    function renderHours(hours) {
+      if (!hours || !Object.keys(hours).length) {
+        els.hoursSection.classList.remove('show');
+        return;
+      }
+      els.hoursGrid.innerHTML = '';
+      for (const [day, time] of Object.entries(hours)) {
+        const d = document.createElement('div'); d.className = 'day'; d.textContent = day;
+        const t = document.createElement('div'); t.className = 'time'; t.textContent = time;
+        els.hoursGrid.appendChild(d);
+        els.hoursGrid.appendChild(t);
+      }
+      els.hoursSection.classList.add('show');
+    }
+
+    function showResult(d) {
+      const coords = (d.lat != null && d.lng != null) ? `${d.lat}, ${d.lng}` : '—';
+      els.coords.textContent = coords;
+
+      renderHeader(d);
+      setRow(els.rowAddress, els.address, d.address);
+      setRow(els.rowPhone, els.phone, d.phone);
+      setRow(els.rowWebsite, els.website, d.website, (el, v) => {
+        el.innerHTML = `<a href="${v}" target="_blank" rel="noopener">${v}</a>`;
+      });
+      setRow(els.rowCategory, els.category, d.category);
+      renderHours(d.hours);
+
       els.result.classList.add('show');
-      renderMap(d.lat, d.lng, coords);
-      copyText(coords).then(ok => { if (ok) flashCopy(); });
+
+      if (d.lat != null && d.lng != null) {
+        renderMap(d.lat, d.lng, coords);
+        copyText(coords).then(ok => { if (ok) flashCopy(); });
+      }
     }
 
     els.form.addEventListener('submit', async e => {
@@ -306,10 +418,10 @@
       els.status.className = 'status';
       els.result.classList.remove('show');
       try {
-        const r = await fetch(`/extract?url=${encodeURIComponent(url)}&phone=true`);
+        const r = await fetch(`/extract?url=${encodeURIComponent(url)}`);
         const d = await r.json();
-        if (d.lat == null || d.lng == null) {
-          els.status.textContent = 'Could not extract coordinates from this URL.';
+        if (d.lat == null && d.lng == null && !d.name && !d.address) {
+          els.status.textContent = 'Could not extract any data from this URL.';
           els.status.className = 'status error';
           return;
         }
