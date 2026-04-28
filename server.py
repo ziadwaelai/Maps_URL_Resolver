@@ -1,10 +1,10 @@
-"""Google Maps URL → coordinates and phone, exposed as a FastAPI endpoint."""
+"""Google Maps URL → full place details, exposed as a FastAPI endpoint."""
 from __future__ import annotations
 
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import httpx
 from fastapi import FastAPI, Query
@@ -19,83 +19,152 @@ USER_AGENT = (
 )
 HEADERS = {"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}
 
-# Ordered by accuracy: pin (!3d!4d), viewport (@), then ?q=/?ll= query.
+# Coord patterns ordered by accuracy: pin, viewport, query string.
 URL_PATTERNS = (
     r"!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)",
     r"/@(-?\d+\.\d+),(-?\d+\.\d+)",
     r"[?&](?:q|ll)=(-?\d+\.\d+),(-?\d+\.\d+)",
-)
-HTML_PATTERNS = (
-    r"!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)",
-    r'"latitude"\s*:\s*(-?\d+\.\d+)\s*,\s*"longitude"\s*:\s*(-?\d+\.\d+)',
-    r"/@(-?\d+\.\d+),(-?\d+\.\d+)",
 )
 
 
 class PlaceInfo(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
+    name: Optional[str] = None
+    address: Optional[str] = None
     phone: Optional[str] = None
+    website: Optional[str] = None
+    category: Optional[str] = None
+    rating: Optional[float] = None
+    reviews: Optional[int] = None
+    hours: Optional[Dict[str, str]] = None
 
 
-def _match(text: str, patterns) -> tuple[Optional[float], Optional[float]]:
-    for pat in patterns:
+# Single JS pass that pulls every field from the rendered place panel.
+# Uses aria-label / data-item-id which are the most stable identifiers Google exposes.
+EXTRACT_JS = r"""() => {
+    const text = (sel, root = document) => {
+        const el = root.querySelector(sel);
+        return el ? el.textContent.trim() : null;
+    };
+    const attr = (sel, a, root = document) => {
+        const el = root.querySelector(sel);
+        return el ? el.getAttribute(a) : null;
+    };
+    const stripPrefix = (s, p) => (s && s.startsWith(p)) ? s.slice(p.length).replace(/^[\s,]+/, '').trim() : s;
+
+    const name = text('h1');
+
+    const addrRaw = attr('[data-item-id="address"]', 'aria-label');
+    const address = stripPrefix(addrRaw, 'Address:');
+
+    const phoneId = attr('button[data-item-id^="phone:tel:"]', 'data-item-id');
+    const phone = phoneId ? phoneId.replace('phone:tel:', '').trim() : null;
+
+    const website = attr('a[data-item-id="authority"]', 'href');
+
+    const category = text('button[jsaction*="category"]');
+
+    let rating = null, reviews = null;
+    const ratingEl = document.querySelector('[role="img"][aria-label*=" stars"]');
+    if (ratingEl) {
+        const lbl = ratingEl.getAttribute('aria-label') || '';
+        const m = lbl.match(/([\d.]+)\s*stars/);
+        if (m) rating = parseFloat(m[1]);
+    }
+    const reviewBtn = document.querySelector('button[aria-label*="reviews"], button[jsaction*="reviewChart"]');
+    if (reviewBtn) {
+        const t = (reviewBtn.getAttribute('aria-label') || reviewBtn.textContent || '').replace(/[,()\s]/g, '');
+        const rm = t.match(/(\d{1,7})/);
+        if (rm) reviews = parseInt(rm[1], 10);
+    }
+
+    // Hours: try specific selectors first, then scan every table for one whose
+    // first column looks like weekday names (Monday/Tuesday/… or Mon/Tue/…).
+    let hours = {};
+    const dayRe = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)/i;
+    const collectFromTable = (t) => {
+        const out = {};
+        for (const row of t.querySelectorAll('tr')) {
+            const cells = row.querySelectorAll('td, th');
+            if (cells.length >= 2) {
+                const day = cells[0].textContent.trim();
+                const time = cells[1].textContent.trim().replace(/\s+/g, ' ');
+                if (day && time && day.length < 20 && dayRe.test(day)) out[day] = time;
+            }
+        }
+        return out;
+    };
+    const targeted = document.querySelector(
+        '[aria-label*="Hours"] table, [data-item-id="oh"] table, table.eK4R0e'
+    );
+    if (targeted) hours = collectFromTable(targeted);
+    if (!Object.keys(hours).length) {
+        for (const t of document.querySelectorAll('table')) {
+            const candidate = collectFromTable(t);
+            if (Object.keys(candidate).length >= 5) { hours = candidate; break; }
+        }
+    }
+
+    return {
+        name, address, phone, website, category, rating, reviews,
+        hours: Object.keys(hours).length ? hours : null,
+    };
+}"""
+
+
+def _match_coords(text: str) -> tuple[Optional[float], Optional[float]]:
+    for pat in URL_PATTERNS:
         m = re.search(pat, text)
         if m:
             return float(m.group(1)), float(m.group(2))
     return None, None
 
 
+async def _expand_short_link(url: str) -> str:
+    """Resolve goo.gl / maps.app.goo.gl to their long form via a quick HTTP redirect."""
+    if "goo.gl" not in url and "maps.app" not in url:
+        return url
+    try:
+        async with httpx.AsyncClient(headers=HEADERS, timeout=10, follow_redirects=True) as client:
+            r = await client.get(url)
+            return str(r.url)
+    except httpx.HTTPError:
+        return url
+
+
 async def _resolve_with_browser(url: str) -> PlaceInfo:
     page = await app.state.context.new_page()
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+        # Wait until Google rewrites the URL with @lat,lng so coords are settled.
         await page.wait_for_function(
             "() => /@-?\\d+\\.\\d+,-?\\d+\\.\\d+/.test(location.href)"
             " || /!3d-?\\d+\\.\\d+!4d-?\\d+\\.\\d+/.test(location.href)",
             timeout=15000,
         )
-        lat, lng = _match(page.url, URL_PATTERNS)
-        phone = await _extract_phone(page)
-        return PlaceInfo(lat=lat, lng=lng, phone=phone)
+        # Best-effort: wait briefly for the place panel so the side details are populated.
+        try:
+            await page.wait_for_selector('[data-item-id="address"], h1', timeout=8000)
+        except Exception:
+            pass
+        data = await page.evaluate(EXTRACT_JS) or {}
+        lat, lng = _match_coords(page.url)
+        return PlaceInfo(lat=lat, lng=lng, **{k: v for k, v in data.items() if v is not None})
     except Exception as e:
-        print(f"[browser] FAILED ({type(e).__name__}): {e} | url={page.url}", flush=True)
+        print(f"[browser] FAILED: {type(e).__name__}: {e}", flush=True)
         return PlaceInfo()
     finally:
         await page.close()
 
 
-async def _extract_phone(page) -> Optional[str]:
-    el = await page.query_selector('button[data-item-id^="phone:tel:"]')
-    if not el:
-        return None
-    value = (await el.get_attribute("data-item-id")) or ""
-    return value.replace("phone:tel:", "").strip() or None
-
-
-async def extract(url: str, want_phone: bool = False) -> PlaceInfo:
-    """Resolve a Google Maps URL into lat / lng / phone. Any field may be None."""
-    try:
-        async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
-            if "goo.gl" in url or "maps.app" in url:
-                r = await client.get(url)
-                url = str(r.url)
-
-            # Phone is only available via the rendered DOM, so force the browser path.
-            if want_phone or "place_id:" in url:
-                return await _resolve_with_browser(url)
-
-            lat, lng = _match(url, URL_PATTERNS)
-            if lat is not None:
-                return PlaceInfo(lat=lat, lng=lng)
-
-            r = await client.get(url)
-            lat, lng = _match(str(r.url), URL_PATTERNS)
-            if lat is None:
-                lat, lng = _match(r.text, HTML_PATTERNS)
-            return PlaceInfo(lat=lat, lng=lng)
-    except httpx.HTTPError:
-        return PlaceInfo()
+async def extract(url: str) -> PlaceInfo:
+    """Resolve a Google Maps URL into full place details. Any field may be None."""
+    url = await _expand_short_link(url)
+    # Force English UI so DOM labels (Address:, X stars, …) are predictable.
+    if "hl=" not in url:
+        url += ("&" if "?" in url else "?") + "hl=en"
+    return await _resolve_with_browser(url)
 
 
 @asynccontextmanager
@@ -105,7 +174,7 @@ async def lifespan(app: FastAPI):
         headless=True,
         args=["--no-sandbox", "--disable-dev-shm-usage"],
     )
-    # Pre-set Google consent cookies so EU servers skip the consent.google.com wall.
+    # Pre-set Google consent cookies so EU/server geos skip the consent.google.com wall.
     app.state.context = await app.state.browser.new_context(
         user_agent=USER_AGENT,
         locale="en-US",
@@ -129,11 +198,8 @@ app = FastAPI(title="Maps URL Resolver", lifespan=lifespan)
 
 
 @app.get("/extract", response_model=PlaceInfo)
-async def extract_endpoint(
-    url: str = Query(..., description="Google Maps URL"),
-    phone: bool = Query(False, description="Render the page in a headless browser to also return the phone number (slower)."),
-):
-    return await extract(url, want_phone=phone)
+async def extract_endpoint(url: str = Query(..., description="Google Maps URL")):
+    return await extract(url)
 
 
 INDEX_HTML = (Path(__file__).parent / "index.html").read_text(encoding="utf-8")
