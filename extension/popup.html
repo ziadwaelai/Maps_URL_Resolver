@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="title">
+      <span class="dot" id="status-dot"></span>
+      Maps Resolver
+    </div>
+    <label class="switch" title="Enable / disable">
+      <input type="checkbox" id="enabled">
+      <span class="slider"></span>
+    </label>
+  </header>
+
+  <section>
+    <label class="lbl" for="backend">Backend URL</label>
+    <input id="backend" type="url" placeholder="http://localhost:8001" spellcheck="false">
+  </section>
+
+  <section class="row">
+    <span class="lbl no-mb">Hotkey</span>
+    <kbd id="hotkey">Alt + Shift + M</kbd>
+  </section>
+  <a href="#" id="change-hotkey" class="link">Change hotkey →</a>
+
+  <section id="last-section" hidden>
+    <label class="lbl">Last result</label>
+    <div class="coords-box">
+      <span class="coords" id="last-coords">—</span>
+      <button class="ghost" id="copy-coords" title="Copy">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2"/>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+        </svg>
+      </button>
+    </div>
+    <div class="meta" id="last-meta"></div>
+  </section>
+
+  <button class="primary" id="resolve-now">Resolve clipboard now</button>
+
+  <footer>
+    Copy a Google Maps URL, then press <kbd class="kbd-sm" id="hotkey-foot">Alt+Shift+M</kbd>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

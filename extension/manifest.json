@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Maps URL Resolver",
+  "version": "1.0.0",
+  "description": "Copy a Google Maps URL and instantly get the coordinates pasted as lat, lng — auto on Maps pages, hotkey everywhere else.",
+  "permissions": ["clipboardRead", "clipboardWrite", "storage", "notifications", "offscreen", "scripting", "activeTab"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Maps URL Resolver"
+  },
+  "commands": {
+    "resolve-clipboard": {
+      "suggested_key": {
+        "default": "Alt+Shift+M",
+        "mac": "Alt+Shift+M"
+      },
+      "description": "Resolve Google Maps URL in clipboard"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.google.com/maps/*",
+        "https://maps.google.com/*",
+        "https://maps.app.goo.gl/*",
+        "https://goo.gl/maps/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
