@@ -83,7 +83,7 @@ section { margin-bottom: 12px; }
 }
 .lbl.no-mb { margin-bottom: 0; }
 
-input[type="url"], input[type="text"] {
+input[type="url"], input[type="text"], textarea {
   width: 100%;
   padding: 8px 10px;
   background: var(--surface);
@@ -94,11 +94,31 @@ input[type="url"], input[type="text"] {
   font-size: 12px;
   outline: none;
   transition: border-color .15s, box-shadow .15s;
+  resize: vertical;
 }
-input:focus {
+input:focus, textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(88, 166, 255, .18);
 }
+
+.mb-6 { margin-bottom: 6px; }
+.ghost-link {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}
+.ghost-link:hover { text-decoration: underline; }
+.map-meta {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--mute);
+  min-height: 14px;
+}
+.map-meta.error { color: var(--danger); }
+.map-meta.ok    { color: var(--success); }
 
 kbd {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;

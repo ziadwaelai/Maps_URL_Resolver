@@ -11,17 +11,30 @@ const els = {
   lastMeta:     $("last-meta"),
   copyCoords:   $("copy-coords"),
   resolveNow:   $("resolve-now"),
+  fieldMap:     $("field-map"),
+  mapStatus:    $("map-status"),
+  resetMap:     $("reset-map"),
+};
+
+const DEFAULT_FIELD_MAP = {
+  ":r12q:": "lat",
+  ":r12s:": "lng",
+  ":r12i:": "phone",
+  ":r12c:": "name",
+  ":r12e:": "name_ar",
 };
 
 async function load() {
   const sync = await chrome.storage.sync.get({
     enabled: true,
     backend: "http://localhost:8001",
+    fieldMap: DEFAULT_FIELD_MAP,
   });
   const local = await chrome.storage.local.get(["lastResult"]);
 
   els.enabled.checked = sync.enabled;
   els.backend.value = sync.backend;
+  els.fieldMap.value = JSON.stringify(sync.fieldMap, null, 2);
   els.statusDot.classList.toggle("off", !sync.enabled);
 
   const r = local.lastResult;
@@ -46,6 +59,31 @@ els.enabled.addEventListener("change", async (e) => {
 
 els.backend.addEventListener("change", (e) => {
   chrome.storage.sync.set({ backend: e.target.value.trim() });
+});
+
+function showMapStatus(text, kind = "") {
+  els.mapStatus.textContent = text;
+  els.mapStatus.className = "map-meta " + kind;
+}
+
+els.fieldMap.addEventListener("input", () => {
+  try {
+    const parsed = JSON.parse(els.fieldMap.value);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      chrome.storage.sync.set({ fieldMap: parsed });
+      showMapStatus("Saved.", "ok");
+    } else {
+      showMapStatus("Must be a JSON object.", "error");
+    }
+  } catch {
+    showMapStatus("Invalid JSON.", "error");
+  }
+});
+
+els.resetMap.addEventListener("click", async () => {
+  await chrome.storage.sync.set({ fieldMap: DEFAULT_FIELD_MAP });
+  els.fieldMap.value = JSON.stringify(DEFAULT_FIELD_MAP, null, 2);
+  showMapStatus("Reset to defaults.", "ok");
 });
 
 els.changeHotkey.addEventListener("click", (e) => {

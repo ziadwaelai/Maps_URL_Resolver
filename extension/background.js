@@ -4,12 +4,24 @@ const DEFAULT_BACKEND = "http://localhost:8001";
 const MAP_URL_RE = /^https?:\/\/(?:www\.|maps\.)?google\.[a-z.]+\/maps|^https?:\/\/maps\.app\.goo\.gl|^https?:\/\/goo\.gl\/maps/i;
 const BADGE_TIMEOUT = 2000;
 
+// Default field-id → response-field map for portal autofill. Stored in
+// chrome.storage.sync so the user can edit it from the popup if the portal
+// regenerates IDs (these `:r12X:` ones are React useId() values).
+const DEFAULT_FIELD_MAP = {
+  ":r12q:": "lat",
+  ":r12s:": "lng",
+  ":r12i:": "phone",
+  ":r12c:": "name",      // English name
+  ":r12e:": "name_ar",   // Arabic name (backend doesn't yet return this)
+};
+
 const state = { badgeTimer: null };
 
 async function getSettings() {
   return chrome.storage.sync.get({
     enabled: true,
     backend: DEFAULT_BACKEND,
+    fieldMap: DEFAULT_FIELD_MAP,
   });
 }
 
@@ -149,9 +161,51 @@ function renderToast(p) {
   setTimeout(dismiss, p.kind === "error" ? 5000 : 3500);
 }
 
+// ---- Autofill -------------------------------------------------------------
+async function tryAutofill(data, fieldMap) {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !/^https?:/.test(tab.url || "")) return 0;
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: fillFormFields,
+      args: [data, fieldMap],
+    });
+    return result || 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Runs in the active tab's page context. Sets values on inputs in a way that
+// React notices (use the prototype's native setter, then dispatch input event).
+function fillFormFields(data, fieldMap) {
+  const setReactValue = (el, raw) => {
+    if (raw == null || raw === "") return false;
+    const value = String(raw);
+    const proto = el instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(el, value);
+    else el.value = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  };
+  let count = 0;
+  for (const [id, key] of Object.entries(fieldMap)) {
+    const value = data[key];
+    if (value == null || value === "") continue;
+    const el = document.querySelector(`[id="${CSS.escape(id)}"]`);
+    if (el && setReactValue(el, value)) count++;
+  }
+  return count;
+}
+
 // ---- Core resolve flow ----------------------------------------------------
 async function resolve({ url, source = "manual" } = {}) {
-  const { enabled, backend } = await getSettings();
+  const { enabled, backend, fieldMap } = await getSettings();
   if (!enabled) {
     if (source === "manual") {
       inPageToast({ kind: "error", title: "Resolver is off", subtitle: "Toggle it on from the popup." });
@@ -159,49 +213,73 @@ async function resolve({ url, source = "manual" } = {}) {
     return null;
   }
 
+  let data = null;
+
+  // 1. If clipboard has a fresh Maps URL, resolve it via the backend.
   if (!url) {
-    try {
-      url = (await clipboardRead())?.trim();
-    } catch (e) {
+    try { url = (await clipboardRead())?.trim(); }
+    catch (e) {
       inPageToast({ kind: "error", title: "Clipboard error", subtitle: e.message || String(e) });
       return null;
     }
   }
-
-  if (!url || !MAP_URL_RE.test(url)) {
-    if (source === "manual") {
-      inPageToast({ kind: "error", title: "Not a Maps URL", subtitle: "Clipboard isn't a Google Maps link." });
-    }
-    return null;
-  }
-
-  setBadge("…", "#3b82f6", 0);
-  try {
-    const apiUrl = `${backend.replace(/\/+$/, "")}/extract?url=${encodeURIComponent(url)}`;
-    const r = await fetch(apiUrl);
-    if (!r.ok) throw new Error(`API ${r.status}`);
-    const d = await r.json();
-    if (d.lat == null || d.lng == null) {
+  if (url && MAP_URL_RE.test(url)) {
+    setBadge("…", "#3b82f6", 0);
+    try {
+      const apiUrl = `${backend.replace(/\/+$/, "")}/extract?url=${encodeURIComponent(url)}`;
+      const r = await fetch(apiUrl);
+      if (!r.ok) throw new Error(`API ${r.status}`);
+      data = await r.json();
+      if (data.lat == null || data.lng == null) {
+        setBadge("!", "#ef4444");
+        inPageToast({ kind: "error", title: "No coordinates", subtitle: "Backend returned no lat/lng." });
+        return null;
+      }
+      await clipboardWrite(`${data.lat}, ${data.lng}`);
+      await setLastResult(data);
+    } catch (e) {
       setBadge("!", "#ef4444");
-      inPageToast({ kind: "error", title: "No coordinates", subtitle: "Backend returned no lat/lng." });
+      inPageToast({ kind: "error", title: "Resolver error", subtitle: e.message || String(e) });
       return null;
     }
-    const coords = `${d.lat}, ${d.lng}`;
-    await clipboardWrite(coords);
-    await setLastResult(d);
-    setBadge("✓", "#10b981");
+  } else {
+    // 2. No fresh URL — fall back to the last cached result so autofill
+    //    still works when the user just wants to fill the same place again.
+    const local = await chrome.storage.local.get(["lastResult"]);
+    data = local.lastResult || null;
+    if (!data) {
+      if (source === "manual") {
+        inPageToast({
+          kind: "error",
+          title: "Nothing to fill",
+          subtitle: "Copy a Google Maps URL first.",
+        });
+      }
+      return null;
+    }
+  }
+
+  // 3. Try autofilling form fields on the active tab.
+  const filled = await tryAutofill(data, fieldMap);
+  setBadge("✓", "#10b981");
+
+  const coords = `${data.lat}, ${data.lng}`;
+  if (filled > 0) {
+    inPageToast({
+      kind: "success",
+      title: `Autofilled ${filled} field${filled > 1 ? "s" : ""}`,
+      name: data.name || undefined,
+      coords,
+    });
+  } else {
     inPageToast({
       kind: "success",
       title: "Copied — ready to paste",
-      name: d.name || undefined,
+      name: data.name || undefined,
       coords,
     });
-    return d;
-  } catch (e) {
-    setBadge("!", "#ef4444");
-    inPageToast({ kind: "error", title: "Resolver error", subtitle: e.message || String(e) });
-    return null;
   }
+  return data;
 }
 
 // ---- Triggers -------------------------------------------------------------

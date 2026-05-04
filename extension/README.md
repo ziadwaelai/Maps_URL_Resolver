@@ -7,13 +7,33 @@ Companion extension for the [Maps URL Resolver](../README.md) backend. Copy a Go
 | Trigger | Where | What happens |
 |---|---|---|
 | **Copy on a Google Maps page** | `google.com/maps`, `maps.app.goo.gl`, `goo.gl/maps` | Auto-detected by the content script — backend is called immediately. |
-| **Hotkey** (default `Alt+Shift+M`) | Anywhere — Slack, mobile share copy, terminal, etc. | Reads the clipboard, validates it's a Maps URL, calls the backend. |
+| **Hotkey** (default `Alt+Shift+M`) | Anywhere — Slack, mobile share copy, terminal, your portal, etc. | Reads clipboard, calls backend, writes `lat, lng` back to clipboard, **and tries to autofill** form fields on the active tab. |
 | **"Resolve clipboard now" button** | Extension popup | Same as the hotkey, but with a click. |
 
 After a successful resolve:
 1. The clipboard is overwritten with `lat, lng` (e.g. `24.7628448, 46.6238678`).
-2. A system notification confirms the value.
-3. The popup remembers the last result with name + category.
+2. **Form fields on the active tab are autofilled** if their IDs match the field map (configurable in the popup).
+3. A bottom-right toast on the active tab confirms the action — text changes between *"Copied — ready to paste"* and *"Autofilled N fields"* depending on whether any inputs matched.
+
+If the clipboard isn't a Maps URL, the hotkey falls back to the **last cached result** so you can re-fill the same place on multiple portal pages without re-copying.
+
+## Autofill
+
+The popup's **Autofill field map** is a small JSON object: `{ "<input id>": "<response key>" }`. Default mapping:
+
+| Field id            | Response key | Notes |
+|---------------------|--------------|-------|
+| `:r12q:`             | `lat`        | Latitude |
+| `:r12s:`             | `lng`        | Longitude |
+| `:r12i:`             | `phone`      | Phone with country code |
+| `:r12c:`             | `name`       | English place name |
+| `:r12e:`             | `name_ar`    | *Backend doesn't return this yet — see below* |
+
+These IDs come from React's `useId()` and may regenerate when the portal updates. If autofill stops matching, open the portal page in DevTools, copy the new IDs from the inputs, and paste them into the popup's textarea — changes save automatically.
+
+The setter uses the native `HTMLInputElement.prototype.value` setter and dispatches `input` + `change` events so React/Material UI / etc. notice the new value (the usual React form trick).
+
+> ⚠️ **Arabic name (`name_ar`) isn't returned by the backend yet.** Adding it requires a second headless render with `hl=ar`. Tell me if you want it and I'll wire it up — it'll add ~5 s per resolve unless we do the two renders in parallel.
 
 ## Install (developer mode)
 
