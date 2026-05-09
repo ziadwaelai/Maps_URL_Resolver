@@ -6,17 +6,19 @@ No Google API key required.
 
 ## What it extracts
 
-| Field      | Notes |
-|------------|-------|
-| `lat`, `lng` | 7-decimal precision (~1 cm) — the value Google stores in the URL pin |
-| `name`       | Place name (`h1`) |
-| `address`    | Full street address |
-| `phone`      | Formatted with country code |
-| `website`    | Official website URL when listed |
-| `category`   | E.g. `Coffee shop`, `Supermarket` |
-| `rating`     | 1.0 – 5.0 |
-| `reviews`    | Total review count when available |
-| `hours`      | `{ "Monday": "8 AM–10 PM", … }` |
+| Field            | Notes |
+|------------------|-------|
+| `lat`, `lng`     | 7-decimal precision (~1 cm) — the value Google stores in the URL pin |
+| `name`           | Raw place name (`h1`) |
+| `name_formatted` | `"<place> - <district> - <city>"` in English (AI-formatted; falls back to raw `name`) |
+| `name_ar`        | Same pattern in Arabic, e.g. `"ستاربكس - حطين - الرياض"` (AI-only) |
+| `address`        | Full street address |
+| `phone`          | Formatted with country code |
+| `website`        | Official website URL when listed |
+| `category`       | E.g. `Coffee shop`, `Supermarket` |
+| `rating`         | 1.0 – 5.0 |
+| `reviews`        | Total review count when available |
+| `hours`          | `{ "Monday": "8 AM–10 PM", … }` |
 
 Any field may be `null` if Google doesn't expose it for that place.
 
@@ -60,10 +62,20 @@ Open the root URL (`/`) in a browser for a one-page dark-mode UI: paste a Google
 ## Run with Docker (recommended)
 
 ```bash
+cp .env.example .env       # optional — only if you want AI-formatted names
 docker compose up -d --build
 ```
 
 Service listens on `http://localhost:8001`.
+
+## AI enrichment
+
+Setting `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`) in `.env` enables two extra fields on every response:
+
+- `name_formatted` — `"Starbucks - Hittin - Riyadh"`
+- `name_ar` — `"ستاربكس - حطين - الرياض"`
+
+Both are derived from the place's `name` and `address` via a single LLM call (default model `gpt-4o-mini`, JSON-mode). Without a key, `name_formatted` falls back to the raw `name` and `name_ar` is `null`. The Chrome extension's autofill uses these fields by default for the English / Arabic name inputs.
 
 ## Run locally
 

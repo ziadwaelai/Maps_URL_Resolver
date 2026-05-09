@@ -26,14 +26,14 @@ The popup's **Autofill field map** is a small JSON object: `{ "<input id>": "<re
 | `:r12q:`             | `lat`        | Latitude |
 | `:r12s:`             | `lng`        | Longitude |
 | `:r12i:`             | `phone`      | Phone with country code |
-| `:r12c:`             | `name`       | English place name |
-| `:r12e:`             | `name_ar`    | *Backend doesn't return this yet — see below* |
+| `:r12c:`             | `name_formatted` | `"<place> - <district> - <city>"` (English, AI-formatted) |
+| `:r12e:`             | `name_ar`        | `"<اسم> - <الحي> - <المدينة>"` (Arabic, AI-formatted) |
 
 These IDs come from React's `useId()` and may regenerate when the portal updates. If autofill stops matching, open the portal page in DevTools, copy the new IDs from the inputs, and paste them into the popup's textarea — changes save automatically.
 
 The setter uses the native `HTMLInputElement.prototype.value` setter and dispatches `input` + `change` events so React/Material UI / etc. notice the new value (the usual React form trick).
 
-> ⚠️ **Arabic name (`name_ar`) isn't returned by the backend yet.** Adding it requires a second headless render with `hl=ar`. Tell me if you want it and I'll wire it up — it'll add ~5 s per resolve unless we do the two renders in parallel.
+> 🤖 **AI-formatted names** require an `OPENAI_API_KEY` (or any OpenAI-compatible endpoint) on the **backend**. See the [main README](../README.md#ai-enrichment) for setup. Without it, the extension still autofills lat/lng/phone, and the English name field gets the raw `name` as a fallback.
 
 ## Install (developer mode)
 

@@ -11,8 +11,8 @@ const DEFAULT_FIELD_MAP = {
   ":r12q:": "lat",
   ":r12s:": "lng",
   ":r12i:": "phone",
-  ":r12c:": "name",      // English name
-  ":r12e:": "name_ar",   // Arabic name (backend doesn't yet return this)
+  ":r12c:": "name_formatted",  // "<name> - <district> - <city>" (English)
+  ":r12e:": "name_ar",         // "<اسم> - <الحي> - <المدينة>" (AI-generated)
 };
 
 const state = { badgeTimer: null };

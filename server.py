@@ -1,6 +1,8 @@
 """Google Maps URL → full place details, exposed as a FastAPI endpoint."""
 from __future__ import annotations
 
+import json
+import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,6 +11,7 @@ from typing import Dict, Optional
 import httpx
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
+from openai import AsyncOpenAI, OpenAIError
 from playwright.async_api import async_playwright
 from pydantic import BaseModel
 
@@ -30,7 +33,9 @@ URL_PATTERNS = (
 class PlaceInfo(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
-    name: Optional[str] = None
+    name: Optional[str] = None              # raw place name from Google
+    name_formatted: Optional[str] = None    # "<name> - <district> - <city>" (English)
+    name_ar: Optional[str] = None           # "<اسم> - <الحي> - <المدينة>" (Arabic, AI-generated)
     address: Optional[str] = None
     phone: Optional[str] = None
     website: Optional[str] = None
@@ -164,7 +169,77 @@ async def extract(url: str) -> PlaceInfo:
     # Force English UI so DOM labels (Address:, X stars, …) are predictable.
     if "hl=" not in url:
         url += ("&" if "?" in url else "?") + "hl=en"
-    return await _resolve_with_browser(url)
+    place = await _resolve_with_browser(url)
+    return await _enrich_with_ai(place)
+
+
+# ---- AI enrichment --------------------------------------------------------
+# Generates "<name> - <district> - <city>" strings in English and Arabic from
+# the raw name + address. Configured via env vars so any OpenAI-compatible
+# endpoint works (OpenAI, Azure, local model gateways, etc.). Disabled cleanly
+# when OPENAI_API_KEY is unset — extraction still returns the raw name.
+
+_AI_CLIENT: Optional[AsyncOpenAI] = None
+
+
+def _ai_client() -> Optional[AsyncOpenAI]:
+    global _AI_CLIENT
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    if _AI_CLIENT is None:
+        _AI_CLIENT = AsyncOpenAI(api_key=api_key)
+    return _AI_CLIENT
+
+
+_AI_SYSTEM_PROMPT = (
+    "You format place identifiers. Given a place name and a full address, "
+    "return STRICT JSON with exactly two keys:\n"
+    "- \"name_en\": fully ENGLISH string, format \"<place name> - <district> - <city>\"\n"
+    "- \"name_ar\": fully ARABIC string, format \"<اسم المحل> - <الحي> - <المدينة>\"\n\n"
+    "name_en MUST stay in English; name_ar MUST be in Arabic. Do not mix scripts. "
+    "Use natural Arabic for brand names (Starbucks → ستاربكس, McDonald's → ماكدونالدز, "
+    "Subway → صب واي, KFC → كنتاكي). If the district is not in the address, use the "
+    "smallest area you can extract.\n\n"
+    "Example input:\n"
+    "Name: Starbucks\n"
+    "Address: Oxygen Gym, Hittin, Riyadh 13512, Saudi Arabia\n\n"
+    "Example output:\n"
+    "{\"name_en\": \"Starbucks - Hittin - Riyadh\", "
+    "\"name_ar\": \"ستاربكس - حطين - الرياض\"}\n\n"
+    "Respond with JSON only, no commentary."
+)
+
+
+async def _enrich_with_ai(place: PlaceInfo) -> PlaceInfo:
+    if not place.name:
+        return place
+    client = _ai_client()
+    if client is None:
+        # No AI configured — at least populate name_formatted with the raw name
+        # so the extension's English autofill field still gets filled.
+        return place.model_copy(update={"name_formatted": place.name})
+    if not place.address:
+        return place.model_copy(update={"name_formatted": place.name})
+    try:
+        rsp = await client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": _AI_SYSTEM_PROMPT},
+                {"role": "user", "content": f"Name: {place.name}\nAddress: {place.address}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+            timeout=15,
+        )
+        data = json.loads(rsp.choices[0].message.content or "{}")
+        return place.model_copy(update={
+            "name_formatted": data.get("name_en") or place.name,
+            "name_ar": data.get("name_ar"),
+        })
+    except (OpenAIError, json.JSONDecodeError, Exception) as e:
+        print(f"[ai] enrichment failed: {type(e).__name__}: {e}", flush=True)
+        return place.model_copy(update={"name_formatted": place.name})
 
 
 @asynccontextmanager

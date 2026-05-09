@@ -20,7 +20,7 @@ const DEFAULT_FIELD_MAP = {
   ":r12q:": "lat",
   ":r12s:": "lng",
   ":r12i:": "phone",
-  ":r12c:": "name",
+  ":r12c:": "name_formatted",
   ":r12e:": "name_ar",
 };
 
